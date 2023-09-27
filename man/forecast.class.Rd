@@ -20,6 +20,8 @@ during the estimation process.
 \item{\code{md.new}}{the new model created with the MAP estimator}
 
 \item{\code{x.new}}{a new data set (according to the data set used for calibration)}
+
+\item{\code{y.new.pred}}{a data set containing the forecasted y for the MAP of theta}
 }
 \if{html}{\out{</div>}}
 }
