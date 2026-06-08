@@ -41,41 +41,46 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
                            arma::vec binf, arma::vec bsup, Function LogTest, int stream)
 {
   // Dimention definition
-  double Dim = theta_init.size();
+  int Dim = theta_init.size();
   // Variables declaration
   int D;
   arma::vec k = 1e-2*ones(Dim,1);
   arma::mat PHIwg=randu<arma::mat>(Ngibbs,Dim), THETAwg=randu<arma::mat>(Ngibbs,Dim);
   arma::mat LikeliWG=randu<arma::mat>(Ngibbs,Dim);
-  arma::vec Likeli=zeros(Nmh,1);
+  arma::vec Likeli=zeros(Nmh);
+  
+  // Set the first row of THETA at the initial value (for the MWG)
+  THETAwg.row(0)=theta_init.t();
+  // Space changing of THETAwg in PHIwg
+  PHIwg.row(0) = log((THETAwg.row(0).t()-binf)/(bsup-binf)).t();
+    
   if (Nmh!=0) {D=Nmh;} else {D=10;}
   arma::mat PHI= randu<arma::mat>(D,Dim), THETA=randu<arma::mat>(D,Dim);
-  // Set the first row of THETA at the initial value (for the MWG)
-  THETA.row(0)=theta_init.t();
-  // Space changing of THETA in PHI
-  PHI.row(0)= log((THETA.row(0).t()-binf)/(bsup-binf)).t();
+
   // Declaration of the acceptation ratios
-  double AcceptationRatio=0;
   arma::vec AcceptationRatioWg=zeros(Dim,1);
+  double AcceptationRatio=0;
+
   // Functions from R
   Function unscale("unscale"), rnorm("rnorm"), runif("runif"), DefPos("DefPos"), mvrnorm("multivariate");
-  // Set the first row of THETA at the initial value (for the MH)
-  THETAwg.row(0)=theta_init.t();
-  // Space changing of THETA in PHI (for the MH)
-  PHIwg.row(0) = log((THETAwg.row(0).t()-binf)/(bsup-binf)).t();
-  // Defining Theta and measurement variance error
-  arma::vec theta=theta_init.rows(0,Dim-2);
-  double Verr=THETAwg(0,Dim-1);
-  // Compute the first ratio alpha
-  double alpha = as<double>(LogTest(theta,Verr));
+  
+  // Defining Theta, Phi, and measurement variance error for MWG
+  arma::vec thetawg = theta_init;
+  arma::vec phiwg = log((thetawg-binf)/(bsup-binf));
+  
+  // Compute the first ratio alpha for MWG
+  double alphawg = as<double>(LogTest(thetawg.rows(0,Dim-2),thetawg(Dim-1)));
+
   // Loading bar (if stream==0 the bar and the prints are disabled)
   if (stream==1)
   {
     Rcout << "Begin of the Metropolis within Gibbs algorithm" << endl;
     Rcout << "Number of iterations "<< Ngibbs << endl;
   }
+
   int barWidth = 40;
   int q = 0;
+
   for (int i=0; i<(Ngibbs-1); i++)
   {
     if (stream==1)
@@ -94,39 +99,34 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
       }
       // end bar progress
     }
-    // Get the ith point
-    vec phi_star = PHIwg.row(i).t();
-    vec theta_star = THETAwg.row(i).t();
+
     // Beggining of the MHWG part
     for (int j=0; j<Dim; j++)
     {
-      if (j>0){
-        phi_star.rows(0,j) = PHIwg.row(i+1).cols(0,j).t();
-      }
+
       // Proposition of a new point in the Log-normalized space
-      phi_star(j) = as<double>(rnorm(1,PHIwg(i,j),sqrt(k(j)*SIGMA(j,j))));
-      theta_star(j) = as<double>(unscale(exp(phi_star(j)),binf(j),bsup(j)));
-      Verr = theta_star(Dim-1);
-      theta = theta_star.rows(0,Dim-2);
-      // Computing the new LogPost for theta star
-      // Ratio for the MH
-      double beta = as<double>(LogTest(theta,Verr));
-      double logR = beta-alpha;
-      if (log(as<double>(runif(1))) < logR)
+      double phiwg_star_j = as<double>(rnorm(1,phiwg(j),sqrt(k(j)*SIGMA(j,j))));
+      arma::vec phiwg_star = phiwg;
+      phiwg_star(j) =  phiwg_star_j;
+
+      arma::vec thetawg_star = as<vec>(unscale(exp(phiwg_star.t()),binf,bsup));
+
+      double betawg = as<double>(LogTest(thetawg_star.rows(0,Dim-2),thetawg_star(Dim-1)));
+      double logRwg = betawg-alphawg; 
+
+      if (log(as<double>(runif(1))) < logRwg)
       {
         // Acceptation case
-        PHIwg(i+1,j)=phi_star(j);
-        THETAwg(i+1,j)=theta_star(j);
-        alpha = beta;
-        LikeliWG(i,j)=beta;
+        thetawg = thetawg_star;
+        phiwg = phiwg_star;
+        alphawg = betawg;
+        LikeliWG(i,j)=betawg;
         AcceptationRatioWg(j) += 1;
       }
       else
       {
         // Rejection case
-        PHIwg(i+1,j)=PHIwg(i,j);
-        THETAwg(i+1,j)=THETAwg(i,j);
-        LikeliWG(i,j)=alpha;
+        LikeliWG(i,j)=alphawg;
       }
       // Adaptive algorithm
       if (i%100==0)
@@ -143,14 +143,42 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
         }
       }
     }
+
+    PHIwg.row(i+1) = phiwg.t();
+    THETAwg.row(i+1) = thetawg.t();
+
 }
   // Establishment of the new covariance matrix
-  mat Stemp = cov(PHIwg.rows(10/100*Ngibbs,(Ngibbs-1)));
-  //arma::mat S=SIGMA;
+
+  Rcout << "End of the Metropolis within Gibbs algorithm" << endl;
+  
+  int startRow = std::max(1, int(0.1*Ngibbs));
+  mat Stemp = cov(PHIwg.rows(startRow, Ngibbs-1));
+  Rcout << "Stemp : " <<  Stemp << endl;
+
   mat S = as<arma::mat>(DefPos(Stemp));
+  Rcout << "S : " <<  S << endl;
+
+
   // Setting a new starting point for the MH algorithm
-  mat NewPhi = mean(PHIwg.rows(10/100*Ngibbs,(Ngibbs-1)));
-  vec NewTheta = as<vec>(unscale(exp(NewPhi.t()),binf,bsup));
+  
+  mat MeanPhi = mean(PHIwg.rows(int(startRow),(Ngibbs-1)));
+  Rcout << "MeanPhi : " <<  MeanPhi << endl;
+  arma::vec phi = MeanPhi.t();
+  Rcout << "phi : " <<  phi << endl;
+  arma::vec theta = as<vec>(unscale(exp(phi.t()),binf,bsup));
+  Rcout << "theta : " <<  theta << endl;
+
+  
+  // Set the first row of THETA at the initial value (for the MH)
+  THETA.row(0) = theta.t();
+  // Space changing of THETA in PHI (for the MH)
+  PHI.row(0)= phi.t();
+
+  // Compute the first ratio alpha for MH
+  double alpha = as<double>(LogTest(theta.rows(0,Dim-2),theta(Dim-1)));
+
+
   if (stream==1)
   {
     Rcout << endl;
@@ -161,13 +189,11 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
     Rcout << "Begin of the metropolis hastings algorithm using the covariance computed" << endl;
     Rcout << "Number of iterations "<< Nmh <<endl;
   }
+  
   q = 0;
   // t is the new k for the second part of the algp
   double t=1e-2;
-  // Store that ratio in alpha2
-  theta = NewTheta.rows(0,Dim-2);
-  Verr = NewTheta(Dim-1);
-  double alpha2 = as<double>(LogTest(theta,Verr));
+
   if (Nmh!=0)
   {
   for (int i=0; i<(Nmh-1); i++)
@@ -188,33 +214,35 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
       }
       // end bar progress
     }
-    // The new point is found from the new phi computed line 153
-    vec phi_star = as<vec>(mvrnorm(1,NewPhi.t(),t*S));
+    // The new point is found from the phi, the mean PHIwg (line 156)
+    vec phi_star = as<vec>(mvrnorm(1,phi.t(),t*S));
     // In the original space
     vec theta_star = as<vec>(unscale(exp(phi_star.t()),binf,bsup));
-    theta = theta_star.rows(0,Dim-2);
-    Verr = theta_star(Dim-1);
+
     // Computing the logPost and Ratio for the overall new point
-    double beta2 = as<double>(LogTest(theta,Verr));
-    double logR2 = beta2 - alpha2;
-    if(log(as<double>(runif(1))) < logR2)
+    double beta = as<double>(LogTest(theta_star.rows(0,Dim-2),theta_star(Dim-1)));
+    double logR = beta - alpha;
+
+    if(log(as<double>(runif(1))) < logR)
     {
       // Acceptation of the new point
-      PHI.row(i+1)=phi_star.t();
-      THETA.row(i+1)=theta_star.t();
-      Likeli(i)=beta2;
-      alpha2 = beta2;
+      phi = phi_star;
+      theta = theta_star;
+      Likeli(i)=beta;
+      alpha = beta;
       AcceptationRatio += 1;
     }
     else
     {
       // Rejection
-      Likeli(i)=alpha2;
-      PHI.row(i+1)=PHI.row(i);
-      THETA.row(i+1)=THETA.row(i);
+      Likeli(i)=alpha;
     }
+
+    PHI.row(i+1) = phi.t();
+    THETA.row(i+1) = theta.t();
+
     // Adaptive part on t
-     if (i%100==0)
+    if (i%100==0)
     {
       if (AcceptationRatio/i<0.2)
       {
