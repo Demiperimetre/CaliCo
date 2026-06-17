@@ -66,7 +66,8 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
   
   // Defining Theta, Phi, and measurement variance error for MWG
   arma::vec thetawg = theta_init;
-  arma::vec phiwg = log((thetawg-binf)/(bsup-binf));
+  arma::vec phiwg = thetawg;
+  phiwg(Dim-1) = log(thetawg(Dim-1));
   
   // Compute the first ratio alpha for MWG
   double alphawg = as<double>(LogTest(thetawg.rows(0,Dim-2),thetawg(Dim-1)));
@@ -109,7 +110,9 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
       arma::vec phiwg_star = phiwg;
       phiwg_star(j) =  phiwg_star_j;
 
-      arma::vec thetawg_star = as<vec>(unscale(exp(phiwg_star.t()),binf,bsup));
+      arma::vec thetawg_star = phiwg_star;
+      thetawg_star(Dim-1) = exp(phiwg_star(Dim-1));
+      
 
       double betawg = as<double>(LogTest(thetawg_star.rows(0,Dim-2),thetawg_star(Dim-1)));
       double logRwg = betawg-alphawg; 
@@ -154,20 +157,21 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
   
   int startRow = std::max(1, int(0.1*Ngibbs));
   mat Stemp = cov(PHIwg.rows(startRow, Ngibbs-1));
-  Rcout << "Stemp : " <<  Stemp << endl;
+  //Rcout << "Stemp : " <<  Stemp << endl;
 
   mat S = as<arma::mat>(DefPos(Stemp));
-  Rcout << "S : " <<  S << endl;
+  //Rcout << "S : " <<  S << endl;
 
 
   // Setting a new starting point for the MH algorithm
   
   mat MeanPhi = mean(PHIwg.rows(int(startRow),(Ngibbs-1)));
-  Rcout << "MeanPhi : " <<  MeanPhi << endl;
+  //Rcout << "MeanPhi : " <<  MeanPhi << endl;
   arma::vec phi = MeanPhi.t();
-  Rcout << "phi : " <<  phi << endl;
-  arma::vec theta = as<vec>(unscale(exp(phi.t()),binf,bsup));
-  Rcout << "theta : " <<  theta << endl;
+  //Rcout << "phi : " <<  phi << endl;
+  arma::vec theta = phi;
+  theta(Dim-1) = exp(phi(Dim-1));
+  //Rcout << "theta : " <<  theta << endl;
 
   
   // Set the first row of THETA at the initial value (for the MH)
@@ -192,7 +196,7 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
   
   q = 0;
   // t is the new k for the second part of the algp
-  double t=1e-2;
+  double t=.5;
 
   if (Nmh!=0)
   {
@@ -217,12 +221,15 @@ List MetropolisHastingsCpp(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec 
     // The new point is found from the phi, the mean PHIwg (line 156)
     vec phi_star = as<vec>(mvrnorm(1,phi.t(),t*S));
     // In the original space
-    vec theta_star = as<vec>(unscale(exp(phi_star.t()),binf,bsup));
+    vec theta_star = phi_star;
+    theta_star(Dim-1) = exp(phi_star(Dim-1));
 
     // Computing the logPost and Ratio for the overall new point
     double beta = as<double>(LogTest(theta_star.rows(0,Dim-2),theta_star(Dim-1)));
     double logR = beta - alpha;
-
+   // Rcout << "beta : " <<  beta << endl;
+  //  Rcout << "alpha : " <<  alpha << endl;
+    
     if(log(as<double>(runif(1))) < logR)
     {
       // Acceptation of the new point
@@ -328,7 +335,7 @@ List MetropolisHastingsCppD(int Ngibbs, int Nmh, arma::vec theta_init, arma::vec
     Rcout << "Begin of the Metropolis within Gibbs algorithm" << endl;
     Rcout << "Number of iterations "<< Ngibbs << endl;
   }
-  int barWidth = 40;
+  int barWidth = 20;
   int q = 0;
   for (int i=0; i<(Ngibbs-1); i++)
   {
